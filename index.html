@@ -325,9 +325,9 @@
 
       <!-- MANUAL MODE (default until Billplz is approved) -->
       <div id="manualPay">
-        <span class="badge badge-amber">Manual verification — Billplz pending approval</span>
+        <span class="badge badge-amber">Manual verification — Billplz payment coming soon</span>
         <p style="font-size:13px;color:#5b5648;line-height:1.6;margin:14px 0;">
-          Online payment gateway is being finalised. For now, please pay via DuitNow QR or bank transfer below, then upload your payment receipt. Your spot is confirmed once our team verifies your payment (usually within 24 hours) and you'll receive your confirmation email with QR code.
+          We're setting up online payment via Billplz. In the meantime, please pay via bank transfer below and upload your payment receipt. Your spot is confirmed once our team verifies your payment and you'll receive a confirmation email with your QR code for event check-in.
         </p>
         <div class="pay-method">
           <b>Bank Transfer</b>
@@ -337,9 +337,8 @@
             Reference: your Registration ID above
           </div>
         </div>
-        <div class="qr-box">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=DuitNow-CARRO-FunRun-Placeholder" alt="DuitNow QR">
-          <div style="font-size:12px;color:#8a8477;margin-top:8px;">Scan with your banking app (DuitNow QR)</div>
+        <div class="upload-row">
+          <label style="font-size:13px;font-weight:700;color:#5b5648;">Upload payment receipt *</label>
         </div>
         <div class="upload-row">
           <input type="file" id="receiptUpload" accept="image/*,.pdf">
@@ -381,7 +380,7 @@
 /* =========================================================
    CONFIG — edit these two lines when you deploy
    ========================================================= */
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxKRjz6YmIS0ygk812GRi4bXyMzJtZN419bOZx6lJ1G2763Es3g1f7UxpQKk04e42N8gQ/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxsTTEtlu7w_zxSvtpnNepfc3vbZE1dHkqnb6bnh8NyTbJKM6DvnurIU8o0HrXThY08zw/exec";
 const PAYMENT_MODE = "MANUAL"; // switch to "BILLPLZ" once your Billplz account is approved
 
 /* ========================================================= */
@@ -477,11 +476,40 @@ document.getElementById("regForm").addEventListener("submit", function(e){
     });
 });
 
+function fileToBase64(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]); // strip the data: prefix
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function submitManualPayment(){
+  const fileInput = document.getElementById("receiptUpload");
+  const file = fileInput.files[0];
+  if(!file){
+    alert("Please upload your payment receipt before submitting.");
+    return;
+  }
+  if(file.size > 5 * 1024 * 1024){
+    alert("File is too large (max 5MB). Please upload a smaller image or PDF.");
+    return;
+  }
+
   const btn = document.getElementById("manualSubmitBtn");
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Submitting...';
-  callBackend({ action:"submitProof", registrationId, paymentMethod:"Manual Bank Transfer / DuitNow" })
+  btn.innerHTML = '<span class="spinner"></span> Uploading receipt...';
+
+  fileToBase64(file)
+    .then(base64 => callBackend({
+      action:"submitProof",
+      registrationId,
+      paymentMethod:"Manual Bank Transfer",
+      fileData: base64,
+      fileName: file.name,
+      fileMimeType: file.type
+    }))
     .then(()=>{
       document.getElementById("confirmRegId").textContent = registrationId;
       document.getElementById("confirmSub").textContent = "Your payment proof was received. Our team will verify it and email your QR code within 24 hours.";
