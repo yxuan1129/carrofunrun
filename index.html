@@ -323,37 +323,14 @@
         <div class="amt">RM50.00</div>
       </div>
 
-      <!-- MANUAL MODE (default until Billplz is approved) -->
-      <div id="manualPay">
-        <span class="badge badge-amber">Manual verification — Billplz payment coming soon</span>
-        <p style="font-size:13px;color:#5b5648;line-height:1.6;margin:14px 0;">
-          We're setting up online payment via Billplz. In the meantime, please pay via bank transfer below and upload your payment receipt. Your spot is confirmed once our team verifies your payment and you'll receive a confirmation email with your QR code for event check-in.
-        </p>
-        <div class="pay-method">
-          <b>Bank Transfer</b>
-          <div style="font-size:13px;color:#5b5648;margin-top:6px;">
-            Maybank · 5123 4567 8901<br>
-            Account name: CARRO Charity Fun Run 2026<br>
-            Reference: your Registration ID above
-          </div>
-        </div>
-        <div class="upload-row">
-          <label style="font-size:13px;font-weight:700;color:#5b5648;">Upload payment receipt *</label>
-        </div>
-        <div class="upload-row">
-          <input type="file" id="receiptUpload" accept="image/*,.pdf">
-        </div>
-        <button class="btn btn-primary btn-block" style="margin-top:18px;" onclick="submitManualPayment()" id="manualSubmitBtn">Submit Payment Proof</button>
-      </div>
-
-      <!-- BILLPLZ MODE (flip PAYMENT_MODE to 'BILLPLZ' in config once approved) -->
-      <div id="billplzPay" class="hide">
+      <!-- BILLPLZ payment -->
+      <div id="billplzPay">
         <p style="font-size:13px;color:#5b5648;margin-bottom:16px;">Select a payment method — secured by Billplz.</p>
         <div class="pay-method">💳 FPX – Online Banking</div>
         <div class="pay-method">💳 Credit / Debit Card</div>
         <div class="pay-method">💳 e-Wallet</div>
         <div class="pay-method">💳 QR Payment</div>
-        <button class="btn btn-primary btn-block" onclick="submitBillplzPayment()">Pay RM50.00</button>
+        <button class="btn btn-primary btn-block" onclick="submitBillplzPayment()" id="billplzSubmitBtn">Pay RM50.00</button>
         <div style="text-align:center;font-size:11px;color:#8a8477;margin-top:10px;">Secured by Billplz</div>
       </div>
     </div>
@@ -380,13 +357,44 @@
 /* =========================================================
    CONFIG — edit these two lines when you deploy
    ========================================================= */
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxsTTEtlu7w_zxSvtpnNepfc3vbZE1dHkqnb6bnh8NyTbJKM6DvnurIU8o0HrXThY08zw/exec";
-const PAYMENT_MODE = "MANUAL"; // switch to "BILLPLZ" once your Billplz account is approved
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxKRjz6YmIS0ygk812GRi4bXyMzJtZN419bOZx6lJ1G2763Es3g1f7UxpQKk04e42N8gQ/exec";
+const PAYMENT_MODE = "BILLPLZ"; // manual mode no longer needed now that Billplz is approved
 
 /* ========================================================= */
 
 let formData = {};
 let registrationId = null;
+
+// If Billplz just redirected the participant back here after paying, look up their status.
+window.addEventListener("load", () => {
+  const params = new URLSearchParams(window.location.search);
+  const regId = params.get("regId");
+  if (regId) {
+    registrationId = regId;
+    document.getElementById("confirmRegId").textContent = regId;
+    document.getElementById("confirmSub").textContent = "Checking your payment status...";
+    goTo("confirm");
+    pollPaymentStatus(regId, 0);
+  }
+});
+
+function pollPaymentStatus(regId, attempt){
+  callBackend({ action:"lookup", registrationId: regId }).then(res=>{
+    if(res.ok && res.paymentStatus === "Confirmed"){
+      document.getElementById("confirmSub").textContent = "Your payment is confirmed! Check your inbox for your QR code.";
+      formData.fullName = res.fullName;
+      formData.tshirtSize = res.tshirtSize;
+      renderConfirmDetails(true);
+    } else if (attempt < 6) {
+      // Billplz's webhook can take a few seconds to arrive — retry briefly before giving up.
+      setTimeout(()=> pollPaymentStatus(regId, attempt + 1), 3000);
+    } else {
+      document.getElementById("confirmSub").textContent = "Payment received — we're still confirming it on our end. Your confirmation email with QR code will arrive shortly.";
+    }
+  }).catch(()=>{
+    document.getElementById("confirmSub").textContent = "Payment received — we're confirming it now. Your confirmation email with QR code will arrive shortly.";
+  });
+}
 
 function goTo(step){
   ["landing","register","payment","confirm"].forEach(s=>{
@@ -463,8 +471,6 @@ document.getElementById("regForm").addEventListener("submit", function(e){
     .then(res=>{
       registrationId = res.registrationId || ("CFR2026-" + Date.now().toString().slice(-6));
       document.getElementById("payRegId").textContent = registrationId;
-      document.getElementById("billplzPay").classList.toggle("hide", PAYMENT_MODE!=="BILLPLZ");
-      document.getElementById("manualPay").classList.toggle("hide", PAYMENT_MODE!=="MANUAL");
       goTo("payment");
     })
     .catch(err=>{
@@ -476,57 +482,26 @@ document.getElementById("regForm").addEventListener("submit", function(e){
     });
 });
 
-function fileToBase64(file){
-  return new Promise((resolve, reject)=>{
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result.split(",")[1]); // strip the data: prefix
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-function submitManualPayment(){
-  const fileInput = document.getElementById("receiptUpload");
-  const file = fileInput.files[0];
-  if(!file){
-    alert("Please upload your payment receipt before submitting.");
-    return;
-  }
-  if(file.size > 5 * 1024 * 1024){
-    alert("File is too large (max 5MB). Please upload a smaller image or PDF.");
-    return;
-  }
-
-  const btn = document.getElementById("manualSubmitBtn");
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Uploading receipt...';
-
-  fileToBase64(file)
-    .then(base64 => callBackend({
-      action:"submitProof",
-      registrationId,
-      paymentMethod:"Manual Bank Transfer",
-      fileData: base64,
-      fileName: file.name,
-      fileMimeType: file.type
-    }))
-    .then(()=>{
-      document.getElementById("confirmRegId").textContent = registrationId;
-      document.getElementById("confirmSub").textContent = "Your payment proof was received. Our team will verify it and email your QR code within 24 hours.";
-      renderConfirmDetails(false);
-      goTo("confirm");
-    })
-    .catch(err=> alert("Could not submit payment proof: " + err))
-    .finally(()=>{ btn.disabled=false; btn.innerHTML="Submit Payment Proof"; });
-}
-
 function submitBillplzPayment(){
+  const btn = document.getElementById("billplzSubmitBtn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Redirecting to payment...';
   // In BILLPLZ mode, this calls your backend to create a Billplz bill and redirect the user to bill_url
   callBackend({ action:"createBillplzBill", registrationId })
     .then(res=>{
-      if(res.billUrl){ window.location.href = res.billUrl; }
+      if(res.billUrl){
+        window.location.href = res.billUrl;
+      } else {
+        alert("Payment could not be started: " + (res.error || "Unknown error"));
+        btn.disabled = false;
+        btn.innerHTML = "Pay RM50.00";
+      }
     })
-    .catch(err=> alert("Payment could not be started: " + err));
+    .catch(err=>{
+      alert("Payment could not be started: " + err);
+      btn.disabled = false;
+      btn.innerHTML = "Pay RM50.00";
+    });
 }
 
 function renderConfirmDetails(paid){
